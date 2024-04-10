@@ -155,7 +155,7 @@ ADD CHANGE RECOVERY
     "StartTime": "sample_StartTime",
     "EndTime": "sample_EndTime",
     "type": "sample_type",
-    "isVirtual": "1asdasdasd",
+    "isVirtual": "1",
     "island": "visayas",
     "clinic": "sample_clinic",
     "region": "sample_region"
@@ -171,24 +171,11 @@ EDIT CHANGE RECOVERY
     "isVirtual": "0",
     "apptid": "456",
     "island": "visayas"
-}, 
-{
-    "action": "edit",
-    "type": "QWEQWE",
-    "status": "abc",
-    "isVirtual": "0",
-    "apptid": "321",
-    "island": "visayas"
 }
 ]
 
 DELETE CHANGE RECOVERY
 [
-{
-    "action": "delete",
-    "apptid": "123",
-    "island": "visayas"
-},
 {
     "action": "delete",
     "apptid": "456",
@@ -402,7 +389,6 @@ async function deleteDataFromTable(req, res, node, id) {
 }
 
 
-
 // * may have to add options to write to different log files (we might need 3, one for each database)
 function addToLog(log) {
     const __filename = fileURLToPath(import.meta.url);
@@ -520,84 +506,113 @@ async function redoAddTransaction(transaction, region) {
     return new Promise(async (resolve, reject) => {
         try {
 
-            // CONNECT TO DATABASES
-            const primaryNodeConnection = await util.promisify(centralNode.getConnection).bind(centralNode)();
-
+            let primaryNodeConnection;
             let secondaryNodeConnection;
-            console.log("region: " + region);
-            if (region === 'luzon') {
-                secondaryNodeConnection = await util.promisify(luzonNode.getConnection).bind(luzonNode)();
-            } else if (region === 'visayas' || region === 'mindanao') {
-                secondaryNodeConnection = await util.promisify(visayasMindanaoNode.getConnection).bind(visayasMindanaoNode)();
+            let result;
+            // CONNECT TO DATABASES
+            try {
+                primaryNodeConnection = await util.promisify(centralNode.getConnection).bind(centralNode)();
+                // Rest of the code...
+            } catch (error) {
+                console.log('Failed to connect to primary node database');
+                console.log(error);
+                resolve(false);
+            }
+
+            try {
+                console.log("region: " + region);
+                if (region === 'luzon') {
+                    secondaryNodeConnection = await util.promisify(luzonNode.getConnection).bind(luzonNode)();
+                } else if (region === 'visayas' || region === 'mindanao') {
+                    secondaryNodeConnection = await util.promisify(visayasMindanaoNode.getConnection).bind(visayasMindanaoNode)();
+                }
+            } catch (error) {
+                console.log('Failed to connect to secondary node database');
+                console.log(error);
+                resolve(false);
             }
 
             console.log(transaction);
-            const queryPrimary = util.promisify(primaryNodeConnection.query).bind(primaryNodeConnection);
-            const querySecondary = util.promisify(secondaryNodeConnection.query).bind(secondaryNodeConnection);
             
-            // check check primary node
-            let result = await queryPrimary(
-                    'SELECT * FROM appointments WHERE apptid = ?', transaction.apptid)
+            
+            
+            try {
+                // check check primary node
+                const queryPrimary = util.promisify(primaryNodeConnection.query).bind(primaryNodeConnection);
+                result = await queryPrimary(
+                    'SELECT * FROM appointments WHERE apptid = ?', transaction.apptid);
 
-            if (result.length > 0) {
-                console.log('Rows returned:', result.length);
-                resolve(true);
-            } 
-            else {{
-                console.log('No rows returned');
-                result = await Promise.all([
-                    queryPrimary('START TRANSACTION'),
-                    queryPrimary('INSERT INTO appointments (pxid, clinicid, doctorid, apptid, status, TimeQueued, QueueDate, StartTime, EndTime, type, isVirtual, island, clinic, region) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
-                    [
-                        transaction.pxid, 
-                        transaction.clinicid, 
-                        transaction.doctorid, 
-                        transaction.apptid, 
-                        transaction.status,
-                        transaction.TimeQueued, 
-                        transaction.QueueDate, 
-                        transaction.StartTime, 
-                        transaction.EndTime,
-                        transaction.type,
-                        transaction.isVirtual, 
-                        transaction.island, 
-                        transaction.clinic,
-                        transaction.region
-                    ]),
-                    queryPrimary('COMMIT')
-                ]);
-            }}
+                if (result.length > 0) {
+                    console.log('Rows returned:', result.length);
+                    resolve(true);
+                } else {
+                    console.log('No rows returned');
+                    result = await Promise.all([
+                        queryPrimary('START TRANSACTION'),
+                        queryPrimary('INSERT INTO appointments (pxid, clinicid, doctorid, apptid, status, TimeQueued, QueueDate, StartTime, EndTime, type, isVirtual, island, clinic, region) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                            [
+                                transaction.pxid,
+                                transaction.clinicid,
+                                transaction.doctorid,
+                                transaction.apptid,
+                                transaction.status,
+                                transaction.TimeQueued,
+                                transaction.QueueDate,
+                                transaction.StartTime,
+                                transaction.EndTime,
+                                transaction.type,
+                                transaction.isVirtual,
+                                transaction.island,
+                                transaction.clinic,
+                                transaction.region
+                            ]),
+                        queryPrimary('COMMIT')
+                    ]);
+                }
+            } catch (error) {
+                console.log('Failed to check primary node');
+                console.log(error);
+                resolve(false);
+            }
 
-            result = await querySecondary('SELECT * FROM appointments_visayas_mindanao WHERE apptid = ?', transaction.apptid)
+            try {
+                // check secondary node
+                const querySecondary = util.promisify(secondaryNodeConnection.query).bind(secondaryNodeConnection);
+                result = await querySecondary('SELECT * FROM appointments_visayas_mindanao WHERE apptid = ?', transaction.apptid)
 
-            if (result.length > 0) {
-                console.log('Rows returned:', result.length);
-                resolve(true);
-            } 
-            else {{
-                console.log('No rows returned');
-                result = await Promise.all([
-                    querySecondary('START TRANSACTION'),
-                    querySecondary('INSERT INTO appointments_visayas_mindanao (pxid, clinicid, doctorid, apptid, status, TimeQueued, QueueDate, StartTime, EndTime, type, isVirtual, island, clinic, region) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
-                    [
-                        transaction.pxid, 
-                        transaction.clinicid, 
-                        transaction.doctorid, 
-                        transaction.apptid, 
-                        transaction.status,
-                        transaction.TimeQueued, 
-                        transaction.QueueDate, 
-                        transaction.StartTime, 
-                        transaction.EndTime,
-                        transaction.type,
-                        transaction.isVirtual, 
-                        transaction.island, 
-                        transaction.clinic,
-                        transaction.region
-                    ]),
-                    querySecondary('COMMIT')
-                ]);
-            }}
+                if (result.length > 0) {
+                    console.log('Rows returned:', result.length);
+                    resolve(true);
+                } 
+                else {{
+                    console.log('No rows returned');
+                    result = await Promise.all([
+                        querySecondary('START TRANSACTION'),
+                        querySecondary('INSERT INTO appointments_visayas_mindanao (pxid, clinicid, doctorid, apptid, status, TimeQueued, QueueDate, StartTime, EndTime, type, isVirtual, island, clinic, region) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
+                        [
+                            transaction.pxid, 
+                            transaction.clinicid, 
+                            transaction.doctorid, 
+                            transaction.apptid, 
+                            transaction.status,
+                            transaction.TimeQueued, 
+                            transaction.QueueDate, 
+                            transaction.StartTime, 
+                            transaction.EndTime,
+                            transaction.type,
+                            transaction.isVirtual, 
+                            transaction.island, 
+                            transaction.clinic,
+                            transaction.region
+                        ]),
+                        querySecondary('COMMIT')
+                    ]);
+                }}
+            } catch (error) {
+                console.log('Failed to check secondary node');
+                console.log(error);
+                resolve(false);
+            }
 
             let finalResultPrimary = await queryPrimary(
                 'SELECT * FROM appointments WHERE pxid = ? AND clinicid = ? AND doctorid = ? AND apptid = ? AND status = ? AND TimeQueued = ? AND QueueDate = ? AND StartTime = ? AND EndTime = ? AND type = ? AND isVirtual = ? AND island = ? AND clinic = ? AND region = ?',
@@ -663,53 +678,96 @@ async function redoEditTransaction(transaction, region) {
     return new Promise(async (resolve, reject) => {
         try {
 
-            // CONNECT TO DATABASES
-            const primaryNodeConnection = await util.promisify(centralNode.getConnection).bind(centralNode)();
-
+            let primaryNodeConnection;
             let secondaryNodeConnection;
-            console.log("region: " + region);
-            if (region === 'luzon') {
-                secondaryNodeConnection = await util.promisify(luzonNode.getConnection).bind(luzonNode)();
-            } else if (region === 'visayas' || region === 'mindanao') {
-                secondaryNodeConnection = await util.promisify(visayasMindanaoNode.getConnection).bind(visayasMindanaoNode)();
+            let result;
+            // CONNECT TO DATABASES
+            try {
+                primaryNodeConnection = await util.promisify(centralNode.getConnection).bind(centralNode)();
+            } catch (error) {
+                console.log('Failed to connect to the central node database');
+                console.log(error);
+                resolve(false);
+            }
+
+            
+            try {
+                console.log("region: " + region);
+                if (region === 'luzon') {
+                    secondaryNodeConnection = await util.promisify(luzonNode.getConnection).bind(luzonNode)();
+                } else if (region === 'visayas' || region === 'mindanao') {
+                    secondaryNodeConnection = await util.promisify(visayasMindanaoNode.getConnection).bind(visayasMindanaoNode)();
+                }
+            } catch (error) {
+                console.log('Failed to connect to the secondary node database');
+                console.log(error);
+                resolve(false);
             }
 
             console.log(transaction);
-            const queryPrimary = util.promisify(primaryNodeConnection.query).bind(primaryNodeConnection);
-            const querySecondary = util.promisify(secondaryNodeConnection.query).bind(secondaryNodeConnection);
+            
+            
             
             // check check primary node
-            let finalResultPrimary = await queryPrimary(
-                'UPDATE appointments SET region = ?, type = ?, status = ?, isVirtual = ? WHERE apptid = ?',
-                [
-                    transaction.region,
-                    transaction.type,
-                    transaction.status,
-                    transaction.isVirtual,
-                    transaction.apptid
-                ]
-            );
+            try {
+                const queryPrimary = util.promisify(primaryNodeConnection.query).bind(primaryNodeConnection);
+                let finalResultPrimary = await queryPrimary(
+                    'UPDATE appointments SET region = ?, type = ?, status = ?, isVirtual = ? WHERE apptid = ?',
+                    [
+                        transaction.region,
+                        transaction.type,
+                        transaction.status,
+                        transaction.isVirtual,
+                        transaction.apptid
+                    ]
+                );
+                if (finalResultPrimary.affectedRows > 0) {
+                    console.log(finalResultPrimary.message);
+                    console.log('Successfully Recovered Edit Transaction Change');
+                    resolve(true);
+                } else {
+                    console.log(finalResultPrimary.message);
+                    console.log('Failed to recover Edit Transaction Change');
+                    resolve(false);
+                }
+            } catch (error) {
+                resolve(false);
+                console.log('Failed to recover Edit Transaction Change');
+                console.log(error);
+            }
 
-            let finalResultSecondary = await querySecondary(
-                'UPDATE appointments_visayas_mindanao SET region = ?, type = ?, status = ?, isVirtual = ? WHERE apptid = ?',
-                [
-                    transaction.region,
-                    transaction.type,
-                    transaction.status,
-                    transaction.isVirtual,
-                    transaction.apptid
-                ]
-            )
+            try {
+                const querySecondary = util.promisify(secondaryNodeConnection.query).bind(secondaryNodeConnection);
+                let finalResultSecondary = await querySecondary(
+                    'UPDATE appointments_visayas_mindanao SET region = ?, type = ?, status = ?, isVirtual = ? WHERE apptid = ?',
+                    [
+                        transaction.region,
+                        transaction.type,
+                        transaction.status,
+                        transaction.isVirtual,
+                        transaction.apptid
+                    ]
+                );
+                if (finalResultSecondary.affectedRows > 0) {
+                    console.log(finalResultSecondary.message);
+                    console.log('Successfully Recovered Edit Transaction Change');
+                    resolve(true);
+                } else {
+                    console.log(finalResultSecondary.message);
+                    console.log('Failed to recover Edit Transaction Change');
+                    resolve(false);
+                }
+            } catch (error) {
+                resolve(false);
+                console.log('Failed to recover Edit Transaction Change');
+                console.log(error);
+            }
 
             if ((finalResultPrimary.affectedRows > 0) && finalResultSecondary.affectedRows > 0) {
-                console.log(finalResultPrimary.message)
-                console.log(finalResultSecondary.message)
                 console.log('Successfully Recovered Edit Transaction Change');
                 resolve(true);
             }
             else {
-                console.log(finalResultPrimary.message)
-                console.log(finalResultSecondary.message)
                 console.log('Failed to recover Edit Transaction Change');
                 resolve(false);
             }
@@ -729,51 +787,82 @@ async function redoDeleteTransaction(transaction, region) {
     return new Promise(async (resolve, reject) => {
         try {
 
-            // CONNECT TO DATABASES
-            const primaryNodeConnection = await util.promisify(centralNode.getConnection).bind(centralNode)();
-
+            let primaryNodeConnection;
             let secondaryNodeConnection;
-            console.log("region: " + region);
-            if (region === 'luzon') {
-                secondaryNodeConnection = await util.promisify(luzonNode.getConnection).bind(luzonNode)();
-            } else if (region === 'visayas' || region === 'mindanao') {
-                secondaryNodeConnection = await util.promisify(visayasMindanaoNode.getConnection).bind(visayasMindanaoNode)();
+            let result;
+
+            // CONNECT TO DATABASES
+
+            try {
+                primaryNodeConnection = await util.promisify(centralNode.getConnection).bind(centralNode)();
+            } catch (error) {
+                console.log('Failed to connect to the central node database');
+                console.log(error);
+                resolve(false);
+            }
+
+            
+            try {
+                console.log("region: " + region);
+                if (region === 'luzon') {
+                    secondaryNodeConnection = await util.promisify(luzonNode.getConnection).bind(luzonNode)();
+                } else if (region === 'visayas' || region === 'mindanao') {
+                    secondaryNodeConnection = await util.promisify(visayasMindanaoNode.getConnection).bind(visayasMindanaoNode)();
+                }
+            } catch (error) {
+                console.log('Failed to connect to the secondary node database');
+                console.log(error);
+                resolve(false);
             }
 
             console.log(transaction);
-            const queryPrimary = util.promisify(primaryNodeConnection.query).bind(primaryNodeConnection);
-            const querySecondary = util.promisify(secondaryNodeConnection.query).bind(secondaryNodeConnection);
+            
+            
             
             // action here
             // ...
-            let result = await queryPrimary(
-                'SELECT * FROM appointments WHERE apptid = ?', transaction.apptid)
+            try {
+                const queryPrimary = util.promisify(primaryNodeConnection.query).bind(primaryNodeConnection);
+                result = await queryPrimary(
+                    'SELECT * FROM appointments WHERE apptid = ?', transaction.apptid)
 
-            if (result.length > 0) {
-                console.log('Rows returned:', result.length);
-                result = await Promise.all([
-                    queryPrimary('START TRANSACTION'),
-                    queryPrimary('DELETE FROM appointments WHERE apptid = ?', transaction.apptid),
-                    queryPrimary('COMMIT')
-                ]);
-            } 
-            else {{
-                console.log('No rows returned');
-            }}
+                if (result.length > 0) {
+                    console.log('Rows returned:', result.length);
+                    result = await Promise.all([
+                        queryPrimary('START TRANSACTION'),
+                        queryPrimary('DELETE FROM appointments WHERE apptid = ?', transaction.apptid),
+                        queryPrimary('COMMIT')
+                    ]);
+                } 
+                else {
+                    console.log('No rows returned');
+                }
+            } catch (error) {
+                console.log('Failed to execute primary node query');
+                console.log(error);
+                resolve(false);
+            }
 
-            result = await querySecondary('SELECT * FROM appointments_visayas_mindanao WHERE apptid = ?', transaction.apptid)
+            try {
+                const querySecondary = util.promisify(secondaryNodeConnection.query).bind(secondaryNodeConnection);
+                result = await querySecondary('SELECT * FROM appointments_visayas_mindanao WHERE apptid = ?', transaction.apptid)
 
-            if (result.length > 0) {
-                console.log('Rows returned:', result.length);
-                result = await Promise.all([
-                    querySecondary('START TRANSACTION'),
-                    querySecondary('DELETE FROM appointments_visayas_mindanao WHERE apptid = ?', transaction.apptid),
-                    querySecondary('COMMIT')
-                ]);
-            } 
-            else {{
-                console.log('No rows returned');
-            }}
+                if (result.length > 0) {
+                    console.log('Rows returned:', result.length);
+                    result = await Promise.all([
+                        querySecondary('START TRANSACTION'),
+                        querySecondary('DELETE FROM appointments_visayas_mindanao WHERE apptid = ?', transaction.apptid),
+                        querySecondary('COMMIT')
+                    ]);
+                } 
+                else {
+                    console.log('No rows returned');
+                }
+            } catch (error) {
+                console.log('Failed to execute secondary node query');
+                console.log(error);
+                resolve(false);
+            }
 
             //
             let finalResultPrimary = await queryPrimary('SELECT * FROM appointments WHERE apptid = ?', transaction.apptid)
@@ -825,9 +914,14 @@ async function redoTransaction(transaction) {
 // LANDING ROUTE
 app.get('/', async (req, res) => {
     try {
-        
+
         const logIsEmpty = await checkLogIsEmpty();
         
+        // if i want to do transactions of a visayas appointment
+
+        let nodeConnection;
+        
+
         if(logIsEmpty) {
             console.log('Log is empty, no recovery needed. Proceeding with transaction...');
 
