@@ -228,7 +228,7 @@ const luzonNode = createPool({
     port: '20043',
     user: 'root',
     password: '12345678',
-    database: 'log_test_'
+    database: 'log_test'
 });
 
 const visayasMindanaoNode = createPool({
@@ -516,8 +516,6 @@ async function performRecovery() {
     }
 }
 
-
-// redoing add transaction changes
 async function redoAddTransaction(transaction, region) {
     return new Promise(async (resolve, reject) => {
         try {
