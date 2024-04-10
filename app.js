@@ -143,7 +143,7 @@ const centralNode = createPool({
     port: '20042',
     user: 'root',
     password: '12345678',
-    database: 'appointments'
+    database: 'log_test'
 });
 
 // visayas-mindanao database connection
@@ -153,7 +153,7 @@ const luzonNode = createPool({
     port: '20043',
     user: 'root',
     password: '12345678',
-    database: 'test_schema'
+    database: 'log_test_'
 });
 
 const visayasMindanaoNode = createPool({
@@ -162,7 +162,7 @@ const visayasMindanaoNode = createPool({
     port: '20044',
     user: 'root',
     password: '12345678',
-    database: 'test_schema'
+    database: 'log_test'
 });
 
 // APP ACTION FUNCTIONS
@@ -410,30 +410,31 @@ async function performRecovery() {
             }
             
             const logs = JSON.parse(data);
+            const logIndexes = [];
             
             //might have a shitty O() complexity
-            while (logs.length > 0) {
-                const log = logs.shift();
-                try {
-                    // call redo function here
-                    // ...
-                    console.log("Redoing " + log.message);
-                    // Remove the log from the log file
-                    // console.log(logs.length);
-                } catch (error) {
-                    console.error('Error redoing log:', error);
+            for (const log of logs) {
+                let result = await redoTransaction(log, log.island);
+                if (result) {
+                    logIndexes.push(logs.indexOf(log));
                 }
+            }
+
+            // Remove log indexes
+            for (let i = logIndexes.length - 1; i >= 0; i--) {
+                const index = logIndexes[i];
+                logs.splice(index, 1);
             }
 
             // Save the updated logs to log.json
             fs.writeFile(filePath, JSON.stringify(logs), (err) => {
                 if (err) {
                     console.error('Error writing to log file:', err);
-                }
-                else {
+                } else {
                     console.log('Recovery complete');
                 }
             });
+
         });
     } catch (error) {
         console.error('Error during recovery:', error);
@@ -444,37 +445,90 @@ async function performRecovery() {
 async function redoTransaction(transaction, region) {
     return new Promise(async (resolve, reject) => {
         try {
-            let primaryNodeConnection;
-            let secondaryNodeConnection;
+            const primaryNodeConnection = await util.promisify(centralNode.getConnection).bind(centralNode)();
 
+            let secondaryNodeConnection;
+            console.log("region: " + region);
             if (region === 'luzon') {
-                primaryNodeConnection = centralNode;
-                secondaryNodeConnection = luzonNode;
-            } else if (region === 'visayasMindanao') {
-                primaryNodeConnection = centralNode;
-                secondaryNodeConnection = visayasMindanaoNode;
+                secondaryNodeConnection = await util.promisify(luzonNode.getConnection).bind(luzonNode)();
+            } else if (region === 'visayas' || region === 'mindanao') {
+                secondaryNodeConnection = await util.promisify(visayasMindanaoNode.getConnection).bind(visayasMindanaoNode)();
             }
 
+            /*
+                NOTES:
+                    - DOES NOT YET ACCOUNT FOR WHETHER SECONDARY NODE IS LUZON OR VISAYAS-MINDANAO
+                    - RESULT SHOULD CONTAIN PROMISE ALL OF EVERY QUERY
+
+            */
+
+            console.log(transaction);
+            const queryPrimary = util.promisify(primaryNodeConnection.query).bind(primaryNodeConnection);
+            const querySecondary = util.promisify(secondaryNodeConnection.query).bind(secondaryNodeConnection);
+            
             const result = await Promise.all([
-                primaryNodeConnection.query('START TRANSACTION'),
-                secondaryNodeConnection.query('START TRANSACTION'),
-
-                // replace these with proper redo queries
-                // ...
-                primaryNodeConnection.query('SELECT * FROM appointments WHERE region = ?', region),
-                secondaryNodeConnection.query('SELECT * FROM appointments WHERE region = ?', region),
-
-                primaryNodeConnection.query('COMMIT'),
-                secondaryNodeConnection.query('COMMIT')
+                queryPrimary('START TRANSACTION'),
+                querySecondary('START TRANSACTION'),
+                queryPrimary(
+                    'INSERT INTO appointments (pxid, clinicid, doctorid, apptid, status, TimeQueued, QueueDate, StartTime, EndTime, type, isVirtual, island, clinic, region) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
+                    [
+                        transaction.pxid, 
+                        transaction.clinicid, 
+                        transaction.doctorid, 
+                        transaction.apptid, 
+                        transaction.status,
+                        transaction.TimeQueued, 
+                        transaction.QueueDate, 
+                        transaction.StartTime, 
+                        transaction.EndTime,
+                        transaction.type,
+                        transaction.isVirtual, 
+                        transaction.island, 
+                        transaction.clinic,
+                        transaction.region
+                    ]
+                ),
+                querySecondary(
+                    'INSERT INTO appointments_visayas_mindana (pxid, clinicid, doctorid, apptid, status, TimeQueued, QueueDate, StartTime, EndTime, type, isVirtual, island, clinic, region) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
+                    [
+                        transaction.pxid, 
+                        transaction.clinicid, 
+                        transaction.doctorid, 
+                        transaction.apptid, 
+                        transaction.status,
+                        transaction.TimeQueued, 
+                        transaction.QueueDate, 
+                        transaction.StartTime, 
+                        transaction.EndTime,
+                        transaction.type,
+                        transaction.isVirtual, 
+                        transaction.island, 
+                        transaction.clinic,
+                        transaction.region
+                    ]
+                ),
+                queryPrimary('COMMIT'),
+                querySecondary('COMMIT')
             ]);
 
-            if (result[2] && result[3]) {
+            // Access the results
+            const [startPrimary, startSecondary, insertPrimary, insertSecondary, commitPrimary, commitSecondary] = result;
+
+            primaryNodeConnection.release();
+            secondaryNodeConnection.release();
+
+            if (startPrimary && startSecondary && insertPrimary.affectedRows === 1 && insertSecondary.affectedRows === 1 && commitPrimary && commitSecondary) {
+                console.log('Data inserted successfully');
                 resolve(true);
             } else {
+                console.log('Failed to insert data');
                 resolve(false);
             }
+
         } catch (error) {
-            reject(error);
+            resolve(false);
+            console.log('Failed to insert data');
+            console.log(error);
         }
     });
 }
@@ -522,8 +576,6 @@ app.get('/', async (req, res) => {
         console.error('Error:', error);
     }
 });
-
-
 
 app.listen(port, () => {
     console.log(`Server is running on port ${port}`);
