@@ -189,39 +189,6 @@ async function testConnections() {
     }
 }
 
-// * may have to add options to write to different log files (we might need 3, one for each database)
-function addToLog(log) {
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = dirname(__filename);
-    const filePath = `${__dirname}/log.json`;
-    
-    fs.readFile(filePath, 'utf8', (err, data) => {
-        if (err) {
-            console.error('Error reading log file:', err);
-            return;
-        }
-        
-        let logs = [];
-        try {
-            logs = JSON.parse(data);
-        } catch (err) {
-            console.error('Error parsing log file:', err);
-            return;
-        }
-        
-        logs.push(log);
-        
-        fs.writeFile(filePath, JSON.stringify(logs), 'utf8', (err) => {
-            if (err) {
-                console.error('Error writing to log file:', err);
-                return;
-            }
-            
-            console.log('Log added to file');
-        });
-    });
-}
-
 // ADD APPOINTMENT
 async function addDataToTable(req, res, node) {
   //const data = req.body;   **CHANGE IT TO THIS ONE WHEN THE TIME COMES
@@ -359,6 +326,41 @@ async function deleteDataFromTable(req, res, node, id) {
     }
 }
 
+
+
+// * may have to add options to write to different log files (we might need 3, one for each database)
+function addToLog(log) {
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = dirname(__filename);
+    const filePath = `${__dirname}/log.json`;
+    
+    fs.readFile(filePath, 'utf8', (err, data) => {
+        if (err) {
+            console.error('Error reading log file:', err);
+            return;
+        }
+        
+        let logs = [];
+        try {
+            logs = JSON.parse(data);
+        } catch (err) {
+            console.error('Error parsing log file:', err);
+            return;
+        }
+        
+        logs.push(log);
+        
+        fs.writeFile(filePath, JSON.stringify(logs), 'utf8', (err) => {
+            if (err) {
+                console.error('Error writing to log file:', err);
+                return;
+            }
+            
+            console.log('Log added to file');
+        });
+    });
+}
+
 // check if log is empty
 async function checkLogIsEmpty() {
     const __filename = fileURLToPath(import.meta.url);
@@ -439,12 +441,38 @@ async function performRecovery() {
 }
 
 // ASYNC FUNCTION
-async function redoTransaction() {
-    return new Promise((resolve, reject) => {
+async function redoTransaction(transaction, region) {
+    return new Promise(async (resolve, reject) => {
         try {
-            // Add your code here
-            // ...
-            resolve("Async function executed successfully");
+            let primaryNodeConnection;
+            let secondaryNodeConnection;
+
+            if (region === 'luzon') {
+                primaryNodeConnection = centralNode;
+                secondaryNodeConnection = luzonNode;
+            } else if (region === 'visayasMindanao') {
+                primaryNodeConnection = centralNode;
+                secondaryNodeConnection = visayasMindanaoNode;
+            }
+
+            const result = await Promise.all([
+                primaryNodeConnection.query('START TRANSACTION'),
+                secondaryNodeConnection.query('START TRANSACTION'),
+
+                // replace these with proper redo queries
+                // ...
+                primaryNodeConnection.query('SELECT * FROM appointments WHERE region = ?', region),
+                secondaryNodeConnection.query('SELECT * FROM appointments WHERE region = ?', region),
+
+                primaryNodeConnection.query('COMMIT'),
+                secondaryNodeConnection.query('COMMIT')
+            ]);
+
+            if (result[2] && result[3]) {
+                resolve(true);
+            } else {
+                resolve(false);
+            }
         } catch (error) {
             reject(error);
         }
@@ -452,12 +480,14 @@ async function redoTransaction() {
 }
 
 // USAGE
+/*
 try {
     const result = await executeAsyncFunction();
     console.log(result);
 } catch (error) {
     console.error("Error:", error);
 }
+*/
 
 // SERVER ROUTES
 /*
