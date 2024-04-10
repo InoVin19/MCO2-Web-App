@@ -182,6 +182,20 @@ EDIT CHANGE RECOVERY
 }
 ]
 
+DELETE CHANGE RECOVERY
+[
+{
+    "action": "delete",
+    "apptid": "123",
+    "island": "visayas"
+},
+{
+    "action": "delete",
+    "apptid": "456",
+    "island": "visayas"
+}
+]
+
 */
 
 // IMPORTS
@@ -713,6 +727,78 @@ async function redoEditTransaction(transaction, region) {
     });
 }
 
+async function redoDeleteTransaction(transaction, region) {
+    return new Promise(async (resolve, reject) => {
+        try {
+
+            // CONNECT TO DATABASES
+            const primaryNodeConnection = await util.promisify(centralNode.getConnection).bind(centralNode)();
+
+            let secondaryNodeConnection;
+            console.log("region: " + region);
+            if (region === 'luzon') {
+                secondaryNodeConnection = await util.promisify(luzonNode.getConnection).bind(luzonNode)();
+            } else if (region === 'visayas' || region === 'mindanao') {
+                secondaryNodeConnection = await util.promisify(visayasMindanaoNode.getConnection).bind(visayasMindanaoNode)();
+            }
+
+            console.log(transaction);
+            const queryPrimary = util.promisify(primaryNodeConnection.query).bind(primaryNodeConnection);
+            const querySecondary = util.promisify(secondaryNodeConnection.query).bind(secondaryNodeConnection);
+            
+            // action here
+            // ...
+            let result = await queryPrimary(
+                'SELECT * FROM appointments WHERE apptid = ?', transaction.apptid)
+
+            if (result.length > 0) {
+                console.log('Rows returned:', result.length);
+                result = await Promise.all([
+                    queryPrimary('START TRANSACTION'),
+                    queryPrimary('DELETE FROM appointments WHERE apptid = ?', transaction.apptid),
+                    queryPrimary('COMMIT')
+                ]);
+            } 
+            else {{
+                console.log('No rows returned');
+            }}
+
+            result = await querySecondary('SELECT * FROM appointments_visayas_mindanao WHERE apptid = ?', transaction.apptid)
+
+            if (result.length > 0) {
+                console.log('Rows returned:', result.length);
+                result = await Promise.all([
+                    querySecondary('START TRANSACTION'),
+                    querySecondary('DELETE FROM appointments_visayas_mindanao WHERE apptid = ?', transaction.apptid),
+                    querySecondary('COMMIT')
+                ]);
+            } 
+            else {{
+                console.log('No rows returned');
+            }}
+
+            //
+            let finalResultPrimary = await queryPrimary('SELECT * FROM appointments WHERE apptid = ?', transaction.apptid)
+            let finalResultSecondary = await querySecondary('SELECT * FROM appointments_visayas_mindanao WHERE apptid = ?', transaction.apptid)
+            
+            if(finalResultPrimary == 0 && finalResultSecondary == 0) {
+                resolve(true);
+            }
+            else {
+                resolve(false);
+            }
+
+            primaryNodeConnection.release();
+            secondaryNodeConnection.release();
+            
+        } catch (error) {
+            resolve(false);
+            console.log('Failed to recover Edit Transaction Change');
+            console.log(error);
+        }
+    });
+}
+
 // redoing Transactions
 async function redoTransaction(transaction) {
     return new Promise(async (resolve, reject) => {
@@ -721,8 +807,12 @@ async function redoTransaction(transaction) {
                 let result = await redoAddTransaction(transaction, transaction.island);
                 resolve(result);
             }
-            else if(transaction.action = "edit") {
+            else if(transaction.action == "edit") {
                 let result = await redoEditTransaction(transaction, transaction.island);
+                resolve(result);
+            }
+            else if(transaction.action == "delete") {
+                let result = await redoDeleteTransaction(transaction, transaction.island);
                 resolve(result);
             }
             
@@ -733,28 +823,6 @@ async function redoTransaction(transaction) {
         }
     });
 }
-
-// USAGE
-/*
-try {
-    const result = await executeAsyncFunction();
-    console.log(result);
-} catch (error) {
-    console.error("Error:", error);
-}
-*/
-
-// SERVER ROUTES
-/*
-    Add Appointment
-
-    Edit Appointment
-        - Region
-        - Type
-        - Status
-        - Virtual
-    Delete Appointment
-*/
 
 // LANDING ROUTE
 app.get('/', async (req, res) => {
