@@ -477,7 +477,11 @@ async function performRecovery() {
             for (const log of logs) {
                 let result = await redoTransaction(log, log.island);
                 if (result) {
+                    console.log('Recovery successful');
                     logIndexes.push(logs.indexOf(log));
+                }
+                else {
+                    console.log('Recovery failed');
                 }
             }
 
@@ -509,6 +513,8 @@ async function redoAddTransaction(transaction, region) {
             let primaryNodeConnection;
             let secondaryNodeConnection;
             let result;
+            let queryPrimary;
+            let querySecondary;
             // CONNECT TO DATABASES
             try {
                 primaryNodeConnection = await util.promisify(centralNode.getConnection).bind(centralNode)();
@@ -538,7 +544,7 @@ async function redoAddTransaction(transaction, region) {
             
             try {
                 // check check primary node
-                const queryPrimary = util.promisify(primaryNodeConnection.query).bind(primaryNodeConnection);
+                queryPrimary = util.promisify(primaryNodeConnection.query).bind(primaryNodeConnection);
                 result = await queryPrimary(
                     'SELECT * FROM appointments WHERE apptid = ?', transaction.apptid);
 
@@ -570,14 +576,13 @@ async function redoAddTransaction(transaction, region) {
                     ]);
                 }
             } catch (error) {
-                console.log('Failed to check primary node');
                 console.log(error);
                 resolve(false);
             }
 
             try {
                 // check secondary node
-                const querySecondary = util.promisify(secondaryNodeConnection.query).bind(secondaryNodeConnection);
+                querySecondary = util.promisify(secondaryNodeConnection.query).bind(secondaryNodeConnection);
                 result = await querySecondary('SELECT * FROM appointments_visayas_mindanao WHERE apptid = ?', transaction.apptid)
 
                 if (result.length > 0) {
@@ -609,7 +614,6 @@ async function redoAddTransaction(transaction, region) {
                     ]);
                 }}
             } catch (error) {
-                console.log('Failed to check secondary node');
                 console.log(error);
                 resolve(false);
             }
@@ -655,11 +659,9 @@ async function redoAddTransaction(transaction, region) {
             )
 
             if (finalResultPrimary.length > 0 && finalResultSecondary.length > 0) {
-                console.log('Successfully Recovered Add Transaction Change');
                 resolve(true);
             }
             else {
-                console.log('Failed to recover Add Transaction Change');
                 resolve(false);
             }
 
@@ -668,7 +670,6 @@ async function redoAddTransaction(transaction, region) {
             
         } catch (error) {
             resolve(false);
-            console.log('Failed to recover Add Transaction Change');
             console.log(error);
         }
     });
@@ -723,16 +724,13 @@ async function redoEditTransaction(transaction, region) {
                 );
                 if (finalResultPrimary.affectedRows > 0) {
                     console.log(finalResultPrimary.message);
-                    console.log('Successfully Recovered Edit Transaction Change');
                     resolve(true);
                 } else {
                     console.log(finalResultPrimary.message);
-                    console.log('Failed to recover Edit Transaction Change');
                     resolve(false);
                 }
             } catch (error) {
                 resolve(false);
-                console.log('Failed to recover Edit Transaction Change');
                 console.log(error);
             }
 
@@ -750,25 +748,20 @@ async function redoEditTransaction(transaction, region) {
                 );
                 if (finalResultSecondary.affectedRows > 0) {
                     console.log(finalResultSecondary.message);
-                    console.log('Successfully Recovered Edit Transaction Change');
                     resolve(true);
                 } else {
                     console.log(finalResultSecondary.message);
-                    console.log('Failed to recover Edit Transaction Change');
                     resolve(false);
                 }
             } catch (error) {
                 resolve(false);
-                console.log('Failed to recover Edit Transaction Change');
                 console.log(error);
             }
 
             if ((finalResultPrimary.affectedRows > 0) && finalResultSecondary.affectedRows > 0) {
-                console.log('Successfully Recovered Edit Transaction Change');
                 resolve(true);
             }
             else {
-                console.log('Failed to recover Edit Transaction Change');
                 resolve(false);
             }
 
@@ -777,7 +770,6 @@ async function redoEditTransaction(transaction, region) {
             
         } catch (error) {
             resolve(false);
-            console.log('Failed to recover Edit Transaction Change');
             console.log(error);
         }
     });
@@ -790,6 +782,8 @@ async function redoDeleteTransaction(transaction, region) {
             let primaryNodeConnection;
             let secondaryNodeConnection;
             let result;
+            let queryPrimary;
+            let querySecondary;
 
             // CONNECT TO DATABASES
 
@@ -822,7 +816,7 @@ async function redoDeleteTransaction(transaction, region) {
             // action here
             // ...
             try {
-                const queryPrimary = util.promisify(primaryNodeConnection.query).bind(primaryNodeConnection);
+                queryPrimary = util.promisify(primaryNodeConnection.query).bind(primaryNodeConnection);
                 result = await queryPrimary(
                     'SELECT * FROM appointments WHERE apptid = ?', transaction.apptid)
 
@@ -844,7 +838,7 @@ async function redoDeleteTransaction(transaction, region) {
             }
 
             try {
-                const querySecondary = util.promisify(secondaryNodeConnection.query).bind(secondaryNodeConnection);
+                querySecondary = util.promisify(secondaryNodeConnection.query).bind(secondaryNodeConnection);
                 result = await querySecondary('SELECT * FROM appointments_visayas_mindanao WHERE apptid = ?', transaction.apptid)
 
                 if (result.length > 0) {
@@ -880,7 +874,6 @@ async function redoDeleteTransaction(transaction, region) {
             
         } catch (error) {
             resolve(false);
-            console.log('Failed to recover Edit Transaction Change');
             console.log(error);
         }
     });
