@@ -53,10 +53,77 @@
     console.log('Query uncommitted');
     });
 
+
+    app.get('/appointments', async (req, res) => {
+    try {
+        const { region } = req.query;
+        let node;
+        if (region === 'visayas' || region === 'mindanao') {
+            node = visayasMindanaoNode;
+        } else if (region === 'luzon') {
+            node = centralNode;
+        } else {
+            res.status(400).json({ message: 'Invalid region' });
+            return;
+        }
+        const connection = await util.promisify(node.getConnection).bind(node)();
+        const query = util.promisify(connection.query).bind(connection);
+        const result = await query('SELECT * FROM appointments WHERE region = ?', region);
+        connection.release();
+        res.status(200).json(result);
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+
+app.post('/add', async (req, res) => {
+    try {
+        await addDataToTable(req, res, 'central');
+
+    } catch (error) {
+
+        console.error('Error:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+    console.log('Query uncommitted');
+});
+
+app.patch('/edit/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { data, region } = req.body;
+        let node;
+        if (region === 'visayas' || region === 'mindanao') {
+            updateDataInTable(req, res, 'visayas-mindanao', id, data);
+            updateDataInTable (req, res, 'central', id, data);
+        } else if (region === 'luzon') {
+            updateDataInTable(req, res, 'luzon', id, data);
+            updateDataInTable(req, res, 'central', id, data);
+        } else {
+            console.log('Invalid region');
+            res.status(400).json({ message: 'Invalid region' });
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+app.delete('/delete/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        await deleteDataFromTable(req, res, 'central', id);
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
 */
 
 // IMPORTS
-
 import util from 'util';
 import express from 'express';
 import { createPool } from 'mysql2';
@@ -68,9 +135,7 @@ import { dirname } from 'path';
 const app = express();
 const port = 3000;
 
-
 // DATABASE CONNECTIONS
-
 // central node database connection
 const centralNode = createPool({
     connectionLimit: 10,
@@ -124,7 +189,7 @@ async function testConnections() {
     }
 }
 
-// * add options to write to different log files (we need 3, one for each database)
+// * may have to add options to write to different log files (we might need 3, one for each database)
 function addToLog(log) {
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = dirname(__filename);
@@ -157,7 +222,7 @@ function addToLog(log) {
     });
 }
 
-//
+// ADD APPOINTMENT
 async function addDataToTable(req, res, node) {
   //const data = req.body;   **CHANGE IT TO THIS ONE WHEN THE TIME COMES
     const data = 1;
@@ -166,10 +231,10 @@ async function addDataToTable(req, res, node) {
         const nodeConnection = await util.promisify(centralNode.getConnection).bind(secondaryNode)();
     }
     else if(node == 'visayas-mindanao') {
-        const nodeConnection = await util.promisify(secondaryNode.getConnection).bind(secondaryNode)();
+        const nodeConnection = await util.promisify(visayasMindanaoNode.getConnection).bind(visayasMindanaoNode)();
     }
     else {
-        const nodeConnection = await util.promisify(secondaryNode.getConnection).bind(secondaryNode)();
+        const nodeConnection = await util.promisify(luzonNode.getConnection).bind(luzonNode)();
     }
 
     const query = util.promisify(nodeConnection.query).bind(nodeConnection);
@@ -212,7 +277,7 @@ async function addDataToTable(req, res, node) {
     }
 }
 
-// UPDATE APPOINTMENT
+// EDIT APPOINTMENT
 async function updateDataInTable(req, res, node, id, data) {
     if (node === 'central') {
         const nodeConnection = await util.promisify(centralNode.getConnection).bind(centralNode)();
@@ -294,6 +359,106 @@ async function deleteDataFromTable(req, res, node, id) {
     }
 }
 
+// check if log is empty
+async function checkLogIsEmpty() {
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = dirname(__filename);
+    const filePath = `${__dirname}/log.json`;
+
+    return new Promise((resolve, reject) => {
+        fs.readFile(filePath, 'utf8', (err, data) => {
+            if (err) {
+                console.error('Error reading log file:', err);
+                reject(err);
+                return;
+            }
+
+            let logs = [];
+            try {
+                logs = JSON.parse(data);
+            } catch (parseError) {
+                console.error('Error parsing log file:', parseError);
+                reject(parseError);
+                return;
+            }
+
+            console.log('Log size: ' + logs.length);
+
+            if (logs.length > 0) {
+                resolve(false);
+            } else {
+                
+                resolve(true);
+            }
+        });
+    });
+}
+
+// PERFORM RECOVERY
+async function performRecovery() {
+    try {
+        const __filename = fileURLToPath(import.meta.url);
+        const __dirname = dirname(__filename);
+        const filePath = `${__dirname}/log.json`;
+        
+        fs.readFile(filePath, 'utf8', async (err, data) => {
+            if (err) {
+                console.error('Error reading log file:', err);
+                return;
+            }
+            
+            const logs = JSON.parse(data);
+            
+            //might have a shitty O() complexity
+            while (logs.length > 0) {
+                const log = logs.shift();
+                try {
+                    // call redo function here
+                    // ...
+                    console.log("Redoing " + log.message);
+                    // Remove the log from the log file
+                    // console.log(logs.length);
+                } catch (error) {
+                    console.error('Error redoing log:', error);
+                }
+            }
+
+            // Save the updated logs to log.json
+            fs.writeFile(filePath, JSON.stringify(logs), (err) => {
+                if (err) {
+                    console.error('Error writing to log file:', err);
+                }
+                else {
+                    console.log('Recovery complete');
+                }
+            });
+        });
+    } catch (error) {
+        console.error('Error during recovery:', error);
+    }
+}
+
+// ASYNC FUNCTION
+async function redoTransaction() {
+    return new Promise((resolve, reject) => {
+        try {
+            // Add your code here
+            // ...
+            resolve("Async function executed successfully");
+        } catch (error) {
+            reject(error);
+        }
+    });
+}
+
+// USAGE
+try {
+    const result = await executeAsyncFunction();
+    console.log(result);
+} catch (error) {
+    console.error("Error:", error);
+}
+
 // SERVER ROUTES
 /*
     Add Appointment
@@ -309,64 +474,26 @@ async function deleteDataFromTable(req, res, node, id) {
 // LANDING ROUTE
 app.get('/', async (req, res) => {
     try {
-        res.send('Hello World!');
-        console.log('Hello World!');
+        
+        const logIsEmpty = await checkLogIsEmpty();
+        
+        if(logIsEmpty) {
+            console.log('Log is empty, no recovery needed. Proceeding with transaction...');
+        }
+        else {
+            console.log('Proceeding with recovery...');
+            performRecovery();
 
-        // test database connections
-        await testConnections();
-
-        // test logging system
-        const log = { message: 'This is a log message', timestamp: new Date() };
-        addToLog(log);
+            // call actual transaction here
+        }
+        
+        res.send('Welcome to the MCO2 API');
     } catch (error) {
         console.error('Error:', error);
     }
 });
 
-// ADD APPOINTMENT
-app.get('/add', async (req, res) => {
-    try {
-        await addDataToTable(req, res, 'central');
-    } catch (error) {
 
-        // add try for other nodes
-
-        console.error('Error:', error);
-        res.status(500).json({ message: 'Internal server error' });
-    }
-    console.log('Query uncommitted');
-});
-
-// EDIT APPOINTMENT
-/*
-    - Region
-    - Type
-    - Status
-    - Virtual   
-
-*/
-
-app.patch('/edit/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { data } = req.body;
-        await updateDataInTable(req, res, 'central', id, data);
-    } catch (error) {
-        console.error('Error:', error);
-        res.status(500).json({ message: 'Internal server error' });
-    }
-});
-
-// DELETE APPOINTMENT
-app.delete('/delete/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        await deleteDataFromTable(req, res, 'central', id);
-    } catch (error) {
-        console.error('Error:', error);
-        res.status(500).json({ message: 'Internal server error' });
-    }
-});
 
 app.listen(port, () => {
     console.log(`Server is running on port ${port}`);
