@@ -458,7 +458,7 @@ async function redoTransaction(transaction, region) {
             /*
                 NOTES:
                     - DOES NOT YET ACCOUNT FOR WHETHER SECONDARY NODE IS LUZON OR VISAYAS-MINDANAO
-                    - RESULT SHOULD CONTAIN PROMISE ALL OF EVERY QUERY
+                    - SHOULD HAVE DIFFERENT PROCESSES FOR INSERT, EDIT, AND DETE
 
             */
 
@@ -489,7 +489,7 @@ async function redoTransaction(transaction, region) {
                     ]
                 ),
                 querySecondary(
-                    'INSERT INTO appointments_visayas_mindana (pxid, clinicid, doctorid, apptid, status, TimeQueued, QueueDate, StartTime, EndTime, type, isVirtual, island, clinic, region) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
+                    'INSERT INTO appointments_visayas_mindanao (pxid, clinicid, doctorid, apptid, status, TimeQueued, QueueDate, StartTime, EndTime, type, isVirtual, island, clinic, region) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
                     [
                         transaction.pxid, 
                         transaction.clinicid, 
@@ -563,12 +563,16 @@ app.get('/', async (req, res) => {
         
         if(logIsEmpty) {
             console.log('Log is empty, no recovery needed. Proceeding with transaction...');
+
+            // transaction here
+            // ... 
         }
         else {
             console.log('Proceeding with recovery...');
             performRecovery();
 
             // call actual transaction here
+            // ...
         }
         
         res.send('Welcome to the MCO2 API');
